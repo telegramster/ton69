@@ -1,0 +1,11 @@
+node_modules/
+build/
+dist/
+temp/
+*.boc
+*.fif
+*.fc
+*.pkg
+*.abi
+*.compiled.json
+.DS_Store

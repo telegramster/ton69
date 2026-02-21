@@ -1,0 +1,23 @@
+{
+    "name": "trustless-agents",
+    "version": "0.1.0",
+    "license": "MIT",
+    "description": "On-chain identity, reputation and validation for autonomous AI agents on TON",
+    "scripts": {
+        "build": "npx blueprint build --all",
+        "test": "jest"
+    },
+    "devDependencies": {
+        "@ton/blueprint": "^0.22.0",
+        "@ton/core": "^0.63.0",
+        "@ton/crypto": "^3.3.0",
+        "@ton/sandbox": "^0.21.0",
+        "@ton/test-utils": "^0.5.0",
+        "@tact-lang/compiler": "^1.6.0",
+        "jest": "^29.7.0",
+        "ts-jest": "^29.2.0",
+        "typescript": "^5.7.0",
+        "@types/jest": "^29.5.0",
+        "ts-node": "^10.9.0"
+    }
+}
