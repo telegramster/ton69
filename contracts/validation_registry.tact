@@ -33,16 +33,29 @@ struct ValidationData {
     response: Int as uint8;
 }
 
+struct PendingVerification {
+    dataHash: Int as uint256;
+    agentValidatorId: Int as uint64;
+    agentServerId: Int as uint64;
+    requester: Address;
+    validatorAddress: Address;
+    expiresAt: Int as uint64;
+}
+
 contract ValidationRegistry {
     identityRegistry: Address;
     ttl: Int as uint64;
+    verificationSeq: Int as uint64;
     requests: map<Int as uint256, ValidationData>;
+    pendingVerifications: map<Int as uint64, PendingVerification>;
+    pendingByDataHash: map<Int as uint256, Int as uint64>;
 
     init(identityRegistry: Address, ttl: Int) {
         require(identityRegistry != newAddress(0, 0), "Invalid registry address");
         require(ttl > 0, "TTL must be positive");
         self.identityRegistry = identityRegistry;
         self.ttl = ttl;
+        self.verificationSeq = 0;
     }
 
     receive() {
@@ -52,21 +65,63 @@ contract ValidationRegistry {
     receive(msg: RequestValidation) {
         let existing: ValidationData? = self.requests.get(msg.dataHash);
         require(existing == null, "Already requested");
+        require(msg.validatorAddress != newAddress(0, 0), "Invalid validator address");
+        let pendingQuery: Int? = self.pendingByDataHash.get(msg.dataHash);
+        require(pendingQuery == null, "Verification pending");
 
-        self.requests.set(msg.dataHash, ValidationData{
+        self.verificationSeq += 1;
+        let queryId: Int = self.verificationSeq;
+        let expiresAt: Int = now() + self.ttl;
+
+        self.pendingVerifications.set(queryId, PendingVerification{
+            dataHash: msg.dataHash,
             agentValidatorId: msg.agentValidatorId,
             agentServerId: msg.agentServerId,
             requester: sender(),
             validatorAddress: msg.validatorAddress,
-            expiresAt: now() + self.ttl,
-            responded: false,
-            response: 0,
+            expiresAt: expiresAt,
         });
+        self.pendingByDataHash.set(msg.dataHash, queryId);
 
-        cashback(sender());
+        send(SendParameters{
+            to: self.identityRegistry,
+            value: 0,
+            mode: SendRemainingValue | SendIgnoreErrors,
+            body: VerifyAgent{
+                agentId: msg.agentValidatorId,
+                queryId: queryId,
+            }.toCell(),
+        });
     }
 
-    // Only the address designated at request time may respond.
+    // Callback from identity registry. If verification passes, request becomes active.
+    receive(msg: VerifyAgentResponse) {
+        require(sender() == self.identityRegistry, "Unauthorized");
+
+        let pending: PendingVerification? = self.pendingVerifications.get(msg.queryId);
+        if (pending == null) {
+            return;
+        }
+        let pv: PendingVerification = pending!!;
+        self.pendingVerifications.del(msg.queryId);
+        self.pendingByDataHash.del(pv.dataHash);
+
+        if (msg.verified &&
+            msg.agentId == pv.agentValidatorId &&
+            msg.agentAddress == pv.validatorAddress) {
+            self.requests.set(pv.dataHash, ValidationData{
+                agentValidatorId: pv.agentValidatorId,
+                agentServerId: pv.agentServerId,
+                requester: pv.requester,
+                validatorAddress: pv.validatorAddress,
+                expiresAt: pv.expiresAt,
+                responded: false,
+                response: 0,
+            });
+        }
+    }
+
+    // Only the verified designated validator address may respond.
     receive(msg: RespondValidation) {
         let req: ValidationData? = self.requests.get(msg.dataHash);
         require(req != null, "Request not found");
@@ -93,12 +148,24 @@ contract ValidationRegistry {
     // Reclaims storage from expired unresponded requests.
     receive(msg: CleanupExpiredValidation) {
         let req: ValidationData? = self.requests.get(msg.dataHash);
-        require(req != null, "Request not found");
-        let request: ValidationData = req!!;
-        require(now() > request.expiresAt, "Request not yet expired");
-        require(!request.responded, "Already responded, cannot cleanup");
+        if (req != null) {
+            let request: ValidationData = req!!;
+            require(now() > request.expiresAt, "Request not yet expired");
+            require(!request.responded, "Already responded, cannot cleanup");
+            self.requests.del(msg.dataHash);
+            cashback(sender());
+            return;
+        }
 
-        self.requests.del(msg.dataHash);
+        let pendingQuery: Int? = self.pendingByDataHash.get(msg.dataHash);
+        require(pendingQuery != null, "Request not found");
+        let pending: PendingVerification? = self.pendingVerifications.get(pendingQuery!!);
+        require(pending != null, "Request not found");
+        let pv: PendingVerification = pending!!;
+        require(now() > pv.expiresAt, "Request not yet expired");
+
+        self.pendingVerifications.del(pendingQuery!!);
+        self.pendingByDataHash.del(msg.dataHash);
         cashback(sender());
     }
 

@@ -100,6 +100,23 @@ describe('ReputationRegistry', () => {
         expect(await repRegistry.getAuthorizedCount()).toBe(2n);
     });
 
+    it('deduplicates repeated authorization for same client-server pair', async () => {
+        const server = await blockchain.treasury('server');
+        await agentRegistry.send(server.getSender(), { value: toNano('0.05') }, { $$type: 'RegisterAgent' });
+
+        await repRegistry.send(
+            server.getSender(), { value: toNano('0.1') },
+            { $$type: 'AcceptFeedback', agentClientId: 77n, agentServerId: 1n },
+        );
+        await repRegistry.send(
+            server.getSender(), { value: toNano('0.1') },
+            { $$type: 'AcceptFeedback', agentClientId: 77n, agentServerId: 1n },
+        );
+
+        expect(await repRegistry.getFeedbackCount()).toBe(2n);
+        expect(await repRegistry.getAuthorizedCount()).toBe(1n);
+    });
+
     it('rejects cleanup for non-existent pending entry', async () => {
         const user = await blockchain.treasury('user');
         const r = await repRegistry.send(

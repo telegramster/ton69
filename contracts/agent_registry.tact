@@ -31,6 +31,7 @@ contract AgentRegistry {
     agents: map<Int as uint64, Address>;
     agentOwners: map<Int as uint64, Address>;
     addressToAgent: map<Address, Int as uint64>;
+    pendingTransfers: map<Int as uint64, Address>;
 
     init() {
         self.nextAgentId = 0;
@@ -55,7 +56,7 @@ contract AgentRegistry {
         cashback(sender());
     }
 
-    // Transfers identity + ownership to a new address.
+    // Initiates identity transfer to a new address. The recipient must accept.
     receive(msg: UpdateAgentAddress) {
         let currentOwner: Address? = self.agentOwners.get(msg.agentId);
         require(currentOwner != null, "Agent not found");
@@ -64,12 +65,26 @@ contract AgentRegistry {
         let conflict: Int? = self.addressToAgent.get(msg.newAddress);
         require(conflict == null, "New address already registered");
 
+        self.pendingTransfers.set(msg.agentId, msg.newAddress);
+
+        cashback(sender());
+    }
+
+    // Completes transfer; only the designated recipient can accept.
+    receive(msg: AcceptAgentAddressTransfer) {
+        let pending: Address? = self.pendingTransfers.get(msg.agentId);
+        require(pending != null, "Transfer not found");
+        require(pending!! == sender(), "Unauthorized recipient");
+        let conflict: Int? = self.addressToAgent.get(sender());
+        require(conflict == null, "Address already registered");
+
         let oldAddress: Address = self.agents.get(msg.agentId)!!;
         self.addressToAgent.del(oldAddress);
 
-        self.agents.set(msg.agentId, msg.newAddress);
-        self.agentOwners.set(msg.agentId, msg.newAddress);
-        self.addressToAgent.set(msg.newAddress, msg.agentId);
+        self.agents.set(msg.agentId, sender());
+        self.agentOwners.set(msg.agentId, sender());
+        self.addressToAgent.set(sender(), msg.agentId);
+        self.pendingTransfers.del(msg.agentId);
 
         cashback(sender());
     }

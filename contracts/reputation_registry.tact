@@ -37,6 +37,7 @@ contract ReputationRegistry {
     feedbackCount: Int as uint64;
     authorizedCount: Int as uint64;
     pendingFeedbacks: map<Int as uint64, PendingFeedback>;
+    authorizedPairs: map<Int as uint128, Bool>;
 
     init(identityRegistry: Address) {
         require(identityRegistry != newAddress(0, 0), "Invalid registry address");
@@ -88,7 +89,12 @@ contract ReputationRegistry {
         if (msg.verified &&
             msg.agentId == pf.agentServerId &&
             msg.agentAddress == pf.originalSender) {
-            self.authorizedCount += 1;
+            let key: Int = (pf.agentClientId << 64) + pf.agentServerId;
+            let alreadyAuthorized: Bool? = self.authorizedPairs.get(key);
+            if (alreadyAuthorized == null) {
+                self.authorizedPairs.set(key, true);
+                self.authorizedCount += 1;
+            }
         }
     }
 

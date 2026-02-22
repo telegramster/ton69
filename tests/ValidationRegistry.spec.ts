@@ -1,11 +1,13 @@
 import { Blockchain, SandboxContract, TreasuryContract } from '@ton/sandbox';
-import { toNano } from '@ton/core';
+import { Address, toNano } from '@ton/core';
+import { AgentRegistry } from '../build/AgentRegistry/tact_AgentRegistry';
 import { ValidationRegistry } from '../build/ValidationRegistry/tact_ValidationRegistry';
 import '@ton/test-utils';
 
 describe('ValidationRegistry', () => {
     let blockchain: Blockchain;
     let deployer: SandboxContract<TreasuryContract>;
+    let agentRegistry: SandboxContract<AgentRegistry>;
     let registry: SandboxContract<ValidationRegistry>;
     let validator: SandboxContract<TreasuryContract>;
     const TTL = 3600n;
@@ -15,7 +17,11 @@ describe('ValidationRegistry', () => {
         deployer = await blockchain.treasury('deployer');
         validator = await blockchain.treasury('validator');
 
-        registry = blockchain.openContract(await ValidationRegistry.fromInit(deployer.address, TTL));
+        agentRegistry = blockchain.openContract(await AgentRegistry.fromInit());
+        await agentRegistry.send(deployer.getSender(), { value: toNano('0.05') }, null);
+        await agentRegistry.send(validator.getSender(), { value: toNano('0.05') }, { $$type: 'RegisterAgent' });
+
+        registry = blockchain.openContract(await ValidationRegistry.fromInit(agentRegistry.address, TTL));
         const dr = await registry.send(deployer.getSender(), { value: toNano('0.05') }, null);
         expect(dr.transactions).toHaveTransaction({
             from: deployer.address, to: registry.address, deploy: true, success: true,
@@ -26,20 +32,34 @@ describe('ValidationRegistry', () => {
         expect(await registry.getTtlValue()).toBe(TTL);
     });
 
-    it('creates a validation request with designated validator', async () => {
+    it('creates a validation request after validator identity verification', async () => {
         const req = await blockchain.treasury('req');
         const dh = 123456789n;
 
-        await registry.send(
+        const r = await registry.send(
             req.getSender(), { value: toNano('0.05') },
             { $$type: 'RequestValidation', agentValidatorId: 1n, agentServerId: 2n, dataHash: dh, validatorAddress: validator.address },
         );
+        expect(r.transactions).toHaveTransaction({ from: registry.address, to: agentRegistry.address, success: true });
+        expect(r.transactions).toHaveTransaction({ from: agentRegistry.address, to: registry.address, success: true });
 
         const v = await registry.getGetValidation(dh);
         expect(v).not.toBeNull();
         expect(v!.agentValidatorId).toBe(1n);
         expect(v!.responded).toBe(false);
         expect(v!.validatorAddress.toString()).toBe(validator.address.toString());
+    });
+
+    it('does not create request when validator id-address pair is invalid', async () => {
+        const req = await blockchain.treasury('req');
+        const dh = 987654321n;
+
+        await registry.send(
+            req.getSender(), { value: toNano('0.05') },
+            { $$type: 'RequestValidation', agentValidatorId: 999n, agentServerId: 2n, dataHash: dh, validatorAddress: validator.address },
+        );
+
+        expect(await registry.getGetValidation(dh)).toBeNull();
     });
 
     it('rejects duplicate dataHash', async () => {
@@ -125,7 +145,7 @@ describe('ValidationRegistry', () => {
         expect((await registry.getGetValidation(1000n))!.response).toBe(0n);
 
         await registry.send(req.getSender(), { value: toNano('0.05') },
-            { $$type: 'RequestValidation', agentValidatorId: 3n, agentServerId: 4n, dataHash: 2000n, validatorAddress: validator.address });
+            { $$type: 'RequestValidation', agentValidatorId: 1n, agentServerId: 4n, dataHash: 2000n, validatorAddress: validator.address });
         await registry.send(validator.getSender(), { value: toNano('0.05') },
             { $$type: 'RespondValidation', dataHash: 2000n, response: 100n });
         expect((await registry.getGetValidation(2000n))!.response).toBe(100n);
@@ -193,6 +213,19 @@ describe('ValidationRegistry', () => {
         const r = await registry.send(deployer.getSender(), { value: toNano('0.05') },
             { $$type: 'CleanupExpiredValidation', dataHash: 12345n });
         expect(r.transactions).toHaveTransaction({ from: deployer.address, to: registry.address, success: false });
+    });
+
+    it('rejects request with zero validator address', async () => {
+        const req = await blockchain.treasury('req');
+        const zero = Address.parseRaw('0:0000000000000000000000000000000000000000000000000000000000000000');
+        const r = await registry.send(req.getSender(), { value: toNano('0.05') }, {
+            $$type: 'RequestValidation',
+            agentValidatorId: 1n,
+            agentServerId: 2n,
+            dataHash: 4321n,
+            validatorAddress: zero,
+        });
+        expect(r.transactions).toHaveTransaction({ from: req.address, to: registry.address, success: false });
     });
 
     it('returns null for non-existent validation', async () => {

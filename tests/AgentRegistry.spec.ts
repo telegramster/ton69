@@ -58,7 +58,7 @@ describe('AgentRegistry', () => {
         expect(await registry.getAgentCount()).toBe(1n);
     });
 
-    it('transfers identity to a new address', async () => {
+    it('transfers identity to a new address after recipient acceptance', async () => {
         const agent = await blockchain.treasury('agent1');
         const next = await blockchain.treasury('next');
 
@@ -67,11 +67,34 @@ describe('AgentRegistry', () => {
             agent.getSender(), { value: toNano('0.05') },
             { $$type: 'UpdateAgentAddress', agentId: 1n, newAddress: next.address },
         );
+        await registry.send(
+            next.getSender(), { value: toNano('0.05') },
+            { $$type: 'AcceptAgentAddressTransfer', agentId: 1n },
+        );
 
         expect((await registry.getGetAgent(1n))!.toString()).toBe(next.address.toString());
         expect((await registry.getGetAgentOwner(1n))!.toString()).toBe(next.address.toString());
         expect(await registry.getGetAgentByAddress(agent.address)).toBeNull();
         expect(await registry.getGetAgentByAddress(next.address)).toBe(1n);
+    });
+
+    it('rejects transfer acceptance from non-recipient', async () => {
+        const agent = await blockchain.treasury('agent1');
+        const next = await blockchain.treasury('next');
+        const attacker = await blockchain.treasury('attacker');
+
+        await registry.send(agent.getSender(), { value: toNano('0.05') }, { $$type: 'RegisterAgent' });
+        await registry.send(
+            agent.getSender(), { value: toNano('0.05') },
+            { $$type: 'UpdateAgentAddress', agentId: 1n, newAddress: next.address },
+        );
+
+        const r = await registry.send(
+            attacker.getSender(), { value: toNano('0.05') },
+            { $$type: 'AcceptAgentAddressTransfer', agentId: 1n },
+        );
+        expect(r.transactions).toHaveTransaction({ from: attacker.address, to: registry.address, success: false });
+        expect((await registry.getGetAgent(1n))!.toString()).toBe(agent.address.toString());
     });
 
     it('rejects update from non-owner', async () => {

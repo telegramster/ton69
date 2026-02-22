@@ -27,6 +27,10 @@ message UpdateAgentAddress {
     newAddress: Address;
 }
 
+message AcceptAgentAddressTransfer {
+    agentId: Int as uint64;
+}
+
 // Reputation
 
 message AcceptFeedback {
